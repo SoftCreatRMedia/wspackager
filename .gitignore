@@ -8,7 +8,6 @@ build
 sandbox
 
 lib/*
-!lib/.gitkeep
 
 test/**/*.tar
 test/**/*.tar.gz

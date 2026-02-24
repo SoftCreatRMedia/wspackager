@@ -1,57 +1,77 @@
 {
-  "name": "wspackager",
-  "description": "A small application that handles WCF/WSC packaging for you. Previously known as \"wcfutils\"",
-  "version": "1.5.1",
-  "main": "lib/index.js",
-  "scripts": {
-    "compile": "babel src/ -d lib/",
-    "prepublish": "npm run compile",
-    "test": "npm run compile && jest"
-  },
-  "babel": {
-    "presets": [
-      [
-        "@babel/preset-env",
-        {
-          "modules": "commonjs"
-        }
-      ]
-    ],
-    "plugins": [
-      [
-        "@babel/transform-runtime"
-      ]
-    ]
+  "name": "@softcreatr/wspackager",
+  "version": "2.0.0",
+  "description": "A tool that handles WCF/WSC packaging by analyzing package.xml instructions.",
+  "type": "module",
+  "homepage": "https://github.com/SoftCreatRMedia/wspackager",
+  "bugs": {
+    "url": "https://github.com/SoftCreatRMedia/wspackager/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/padarom/wspackager.git"
+    "url": "git+https://github.com/SoftCreatRMedia/wspackager.git"
   },
-  "author": "Christopher Mühl <christopher@padarom.io> (https://padarom.io)",
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
+  "author": "Sascha Greuel <sascha@softcreatr.de> (https://softcreatr.dev)",
+  "contributors": [
+    "Christopher Mühl <christopher@padarom.io> (https://padarom.io)"
+  ],
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    }
+  },
   "bin": {
     "wspackager": "lib/bin.js"
   },
-  "bugs": {
-    "url": "https://github.com/padarom/wspackager/issues"
+  "files": [
+    "lib",
+    "README.md",
+    "CHANGELOG.md",
+    "MIGRATION.md"
+  ],
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.js\" \"*.{md,json,ts,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \".changeset/*.md\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.js\" \"*.{md,json,ts,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \".changeset/*.md\"",
+    "check": "npm run lint && npm run typecheck && npm test && npm run format:check",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish",
+    "prepublishOnly": "npm run compile",
+    "test": "npm run compile && vitest run"
   },
-  "homepage": "https://github.com/padarom/wspackager#readme",
   "dependencies": {
-    "@babel/runtime": "^7.17.7",
-    "async": "^3.2.3",
-    "chalk": "^4.1.2",
-    "commander": "^9.0.0",
-    "glob": "^7.1.1",
-    "lodash.defaults": "^4.2.0",
-    "lodash.uniqby": "^4.7.0",
-    "tar": "^6.1.11",
-    "xml2js": "^0.4.17"
+    "commander": "^14.0.3",
+    "glob": "^13.0.6",
+    "tar": "^7.5.9",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
-    "@babel/cli": "^7.17.6",
-    "@babel/core": "^7.17.7",
-    "@babel/plugin-transform-runtime": "^7.17.0",
-    "@babel/preset-env": "^7.16.11",
-    "jest": "^27.5.1"
+    "@changesets/cli": "^2.29.8",
+    "@eslint/eslintrc": "^3.3.4",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.3.0",
+    "@types/xml2js": "^0.4.14",
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
+    "esbuild": "^0.27.3",
+    "eslint": "^10.0.2",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.3.0",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
