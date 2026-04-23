@@ -28,6 +28,12 @@ interface PackagingPlan {
   direct: string[]
 }
 
+interface CachedPathState {
+  exists: boolean
+  isDirectory: boolean
+  isReadable: boolean
+}
+
 const getErrorCode = (err: unknown): string | undefined => {
   if (typeof err === 'object' && err !== null && 'code' in err) {
     return String((err as { code?: unknown }).code)
@@ -39,8 +45,12 @@ export default class Packager {
   private readonly packageInfo: PackageInfo
   private readonly sourceRoot: string
   private readonly filesToPackage: FileInstruction[]
+  private readonly intermediateFiles = new Set<string>()
+  private readonly intermediateFolders = new Set<string>()
   private destination = ''
   private packagingPlan: PackagingPlan | null = null
+  private readonly pathStateCache = new Map<string, Promise<CachedPathState>>()
+  private readonly directoryEntriesCache = new Map<string, Promise<string[]>>()
 
   constructor(files: FileInstruction[], packageInfo: PackageInfo, sourceRoot: string) {
     this.packageInfo = packageInfo
@@ -62,6 +72,16 @@ export default class Packager {
       ...item,
       path: normalizePath(item.path),
     }))
+
+    for (const file of this.filesToPackage) {
+      if (!file.intermediate) {
+        continue
+      }
+
+      const normalized = normalizePath(file.path)
+      this.intermediateFiles.add(normalized)
+      this.intermediateFolders.add(normalized.replace(/\.tar$/, ''))
+    }
   }
 
   private resolveInputPath(filePath: string): string {
@@ -70,6 +90,54 @@ export default class Packager {
     }
 
     return path.join(this.sourceRoot, filePath)
+  }
+
+  private async loadPathState(resolved: string): Promise<CachedPathState> {
+    try {
+      const stats = await fs.promises.stat(resolved)
+      return {
+        exists: true,
+        isDirectory: stats.isDirectory(),
+        isReadable: true,
+      }
+    } catch (err) {
+      if (getErrorCode(err) === 'ENOENT' || getErrorCode(err) === 'ENOTDIR') {
+        return {
+          exists: false,
+          isDirectory: false,
+          isReadable: false,
+        }
+      }
+
+      throw err
+    }
+  }
+
+  private getPathState(filePath: string): Promise<CachedPathState> {
+    const resolved = this.resolveInputPath(filePath)
+    const cached = this.pathStateCache.get(resolved)
+
+    if (cached) {
+      return cached
+    }
+
+    const pending = this.loadPathState(resolved)
+
+    this.pathStateCache.set(resolved, pending)
+    return pending
+  }
+
+  private getDirectoryEntries(directory: string): Promise<string[]> {
+    const resolved = this.resolveInputPath(directory)
+    const cached = this.directoryEntriesCache.get(resolved)
+
+    if (cached) {
+      return cached
+    }
+
+    const pending = fs.promises.readdir(resolved)
+    this.directoryEntriesCache.set(resolved, pending)
+    return pending
   }
 
   async run(destination: string, quiet: boolean): Promise<RunResult> {
@@ -147,9 +215,9 @@ export default class Packager {
       return newItem
     }
 
-    try {
-      await fs.promises.stat(this.resolveInputPath(instructionPath))
+    const state = await this.getPathState(instructionPath)
 
+    if (state.exists) {
       if (item.isPackage || Util.isTarball(instructionPath)) {
         // Include existing archives as-is.
         newItem.paths = [item.forcePrepack ? adjustedPath : instructionPath]
@@ -157,7 +225,7 @@ export default class Packager {
         newItem.paths = [adjustedPath]
       }
       newItem.originalExists = true
-    } catch {
+    } else {
       newItem.paths = [adjustedPath]
     }
 
@@ -172,43 +240,68 @@ export default class Packager {
     missing: string[]
     ambiguous: Array<{ file: string; roots: string[] }>
   }> {
-    const existingDirect: string[] = []
-    const missing: string[] = []
-    const ambiguous: Array<{ file: string; roots: string[] }> = []
-
-    for (const file of direct) {
-      try {
-        await fs.promises.access(this.resolveInputPath(file), fs.constants.R_OK)
-        existingDirect.push(file)
-        continue
-      } catch {
-        // Fall through and try known prepack roots.
-      }
-
-      const matchingRoots: string[] = []
-      for (const root of prepackRoots) {
-        const candidate = normalizePath(path.join(root, file))
-        try {
-          await fs.promises.access(this.resolveInputPath(candidate), fs.constants.R_OK)
-          matchingRoots.push(root)
-        } catch {
-          // no-op
+    const resolutions = await Promise.all(
+      direct.map(async (file) => {
+        const directState = await this.getPathState(file)
+        if (directState.isReadable) {
+          return { type: 'direct' as const, file }
         }
-      }
 
-      if (matchingRoots.length === 1) {
-        // File is provided via a single prepack source (for example files/acp/...).
-        continue
-      }
+        const matches = await Promise.all(
+          prepackRoots.map(async (root) => {
+            const candidate = normalizePath(path.join(root, file))
+            const candidateState = await this.getPathState(candidate)
+            return candidateState.isReadable ? root : null
+          })
+        )
 
-      if (matchingRoots.length > 1) {
-        ambiguous.push({ file, roots: matchingRoots })
-      } else {
-        missing.push(file)
-      }
-    }
+        const matchingRoots = matches.filter((root): root is string => root !== null)
+
+        if (matchingRoots.length === 1) {
+          return { type: 'provided' as const }
+        }
+
+        if (matchingRoots.length > 1) {
+          return { type: 'ambiguous' as const, file, roots: matchingRoots }
+        }
+
+        return { type: 'missing' as const, file }
+      })
+    )
+
+    const existingDirect = resolutions
+      .filter((entry): entry is { type: 'direct'; file: string } => entry.type === 'direct')
+      .map((entry) => entry.file)
+
+    const missing = resolutions
+      .filter((entry): entry is { type: 'missing'; file: string } => entry.type === 'missing')
+      .map((entry) => entry.file)
+
+    const ambiguous = resolutions.filter(
+      (entry): entry is { type: 'ambiguous'; file: string; roots: string[] } => entry.type === 'ambiguous'
+    )
 
     return { existingDirect, missing, ambiguous }
+  }
+
+  private buildPackagingPlan(instructions: ProcessingInstruction[]): PackagingPlan {
+    const prepack: ProcessingInstruction[] = []
+    const direct: string[] = ['package.xml']
+
+    instructions.forEach((instruction) => {
+      if (
+        instruction.forcePrepack ||
+        (instruction.isPackage && !instruction.originalExists) ||
+        (!instruction.isPackage && Util.isTarball(instruction.original) && !instruction.originalExists)
+      ) {
+        prepack.push(instruction)
+        return
+      }
+
+      direct.push(...instruction.paths.map((value) => normalizePath(value.replace(/\.tar@$/, '.tar'))))
+    })
+
+    return { prepack, direct }
   }
 
   private createDirectFileValidationError(
@@ -243,26 +336,13 @@ export default class Packager {
 
   private async findLocalFiles(): Promise<void> {
     const results = await Promise.all(this.filesToPackage.map((item) => this.processInstruction(item)))
-
-    let prepack: ProcessingInstruction[] = []
-    let direct: string[] = ['package.xml']
-
-    results.forEach((instruction) => {
-      if (
-        instruction.forcePrepack ||
-        (instruction.isPackage && !instruction.originalExists) ||
-        (!instruction.isPackage && Util.isTarball(instruction.original) && !instruction.originalExists)
-      ) {
-        prepack = prepack.concat(instruction)
-      } else {
-        direct = direct.concat(
-          instruction.paths.map((value) => normalizePath(value.replace(/\.tar@$/, '.tar')))
-        )
-      }
-    })
-
-    const uniqueDirect = [...new Set(direct.map((item) => normalizePath(item).replace(/^\/+/, '')))]
-    const prepackRoots = [...new Set(prepack.filter((item) => !item.isPackage).map((item) => item.paths[0]))]
+    const preliminaryPlan = this.buildPackagingPlan(results)
+    const uniqueDirect = [
+      ...new Set(preliminaryPlan.direct.map((item) => normalizePath(item).replace(/^\/+/, ''))),
+    ]
+    const prepackRoots = [
+      ...new Set(preliminaryPlan.prepack.filter((item) => !item.isPackage).map((item) => item.paths[0])),
+    ]
     const resolved = await this.resolveDirectFileLocations(uniqueDirect, prepackRoots)
 
     if (resolved.missing.length > 0 || resolved.ambiguous.length > 0) {
@@ -270,7 +350,7 @@ export default class Packager {
     }
 
     this.packagingPlan = {
-      prepack,
+      prepack: preliminaryPlan.prepack,
       direct: resolved.existingDirect,
     }
   }
@@ -320,26 +400,33 @@ export default class Packager {
       const dir = instruction.paths[0]
       const absoluteDir = this.resolveInputPath(dir)
       let entries: string[]
+      const state = await this.getPathState(dir)
+
+      if (!state.exists) {
+        throw new FileAccessError(
+          `Unable to prepack '${instruction.original}': source directory '${dir}' could not be found`,
+          {
+            code: 'PREPACK_SOURCE_MISSING',
+            meta: { sourcePath: dir, archivePath: instruction.original },
+          }
+        )
+      }
+
+      if (!state.isDirectory) {
+        throw new FileAccessError(
+          `Unable to prepack '${instruction.original}': source path '${dir}' is not a directory`,
+          {
+            code: 'PREPACK_SOURCE_INVALID',
+            meta: { sourcePath: dir, archivePath: instruction.original },
+          }
+        )
+      }
 
       try {
-        const stats = await fs.promises.stat(absoluteDir)
-        if (!stats.isDirectory()) {
-          throw new FileAccessError(
-            `Unable to prepack '${instruction.original}': source path '${dir}' is not a directory`,
-            {
-              code: 'PREPACK_SOURCE_INVALID',
-              meta: { sourcePath: dir, archivePath: instruction.original },
-            }
-          )
-        }
-
-        entries = await fs.promises.readdir(absoluteDir)
+        entries = await this.getDirectoryEntries(dir)
       } catch (err) {
-        if (err instanceof FileAccessError) {
-          throw err
-        }
-
         const code = getErrorCode(err)
+
         if (code === 'ENOENT' || code === 'ENOTDIR') {
           throw new FileAccessError(
             `Unable to prepack '${instruction.original}': source directory '${dir}' could not be found`,
@@ -363,7 +450,9 @@ export default class Packager {
           if (instruction.forcePrepack) {
             return true
           }
+
           const relative = normalizePath(path.join(dir, filePath))
+
           return !this.isIntermediateFile(relative)
         },
       })
@@ -378,26 +467,28 @@ export default class Packager {
       await new TaskRunner({ source, destination, quiet: true }).run()
     }
 
-    try {
-      await fs.promises.stat(dir)
+    const state = await this.getPathState(dir)
+
+    if (state.exists) {
       await runPackager(dir)
-    } catch {
-      // try to find package directory
-      const parentDir = path.dirname(dir)
-      const result = await this.findAdditionalPackage(parentDir, instruction.identifier || '')
-
-      if (!result) {
-        throw new PackageLookupError(
-          `Unable to locate package '${instruction.identifier}', which is defined to be included`,
-          {
-            code: 'INCLUDED_PACKAGE_NOT_FOUND',
-            meta: { identifier: instruction.identifier, searchRoot: parentDir },
-          }
-        )
-      }
-
-      await runPackager(result)
+      return
     }
+
+    // try to find package directory
+    const parentDir = path.dirname(dir)
+    const result = await this.findAdditionalPackage(parentDir, instruction.identifier || '')
+
+    if (!result) {
+      throw new PackageLookupError(
+        `Unable to locate package '${instruction.identifier}', which is defined to be included`,
+        {
+          code: 'INCLUDED_PACKAGE_NOT_FOUND',
+          meta: { identifier: instruction.identifier, searchRoot: parentDir },
+        }
+      )
+    }
+
+    await runPackager(result)
   }
 
   /**
@@ -419,7 +510,9 @@ export default class Packager {
 
       try {
         await parser.readXml(absoluteFile)
+
         parser.parseInfo()
+
         if (parser.info?.name === identifier) {
           return path.dirname(absoluteFile)
         }
@@ -440,15 +533,9 @@ export default class Packager {
   private isIntermediateFile(name: string, omitTar?: boolean): boolean {
     const testName = normalizePath(name)
 
-    for (const file of this.filesToPackage) {
-      const filename = normalizePath(file.path)
-
-      if (filename === `${testName}.tar` || (omitTar && filename === testName)) {
-        return file.intermediate
-      }
-    }
-
-    return false
+    return (
+      this.intermediateFolders.has(testName) || (Boolean(omitTar) && this.intermediateFiles.has(testName))
+    )
   }
 
   private async packageAll(): Promise<string> {
@@ -555,6 +642,7 @@ export default class Packager {
     })
 
     console.log(ConsoleStyle.boldGreen(path.basename(this.getDestinationPath())))
+
     outputTree(tree, 0, [], {
       bold: ConsoleStyle.bold,
       tar: ConsoleStyle.boldCyan,

@@ -11,7 +11,7 @@
 - Old: `wspackager`
 - New: `@softcreatr/wspackager`
 
-2. Minimum supported Node.js version is now `18`.
+2. Minimum supported Node.js version is now `20`.
 
 3. Runtime behavior no longer mutates global working directory:
 
@@ -48,7 +48,7 @@
 npm install -g @softcreatr/wspackager
 ```
 
-2. Ensure your runtime is Node.js 18+.
+2. Ensure your runtime is Node.js 20+.
 
 3. Ensure all direct script/database paths in `package.xml` point to real source files with exact casing, either directly or via one prepack source directory.
 

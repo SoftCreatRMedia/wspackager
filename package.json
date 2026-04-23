@@ -1,6 +1,6 @@
 {
   "name": "@softcreatr/wspackager",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A tool that handles WCF/WSC packaging by analyzing package.xml instructions.",
   "type": "module",
   "homepage": "https://github.com/SoftCreatRMedia/wspackager",
@@ -39,7 +39,7 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.js\"",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.js\" \"*.{md,json,ts,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \".changeset/*.md\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.js\" \"*.{md,json,ts,yml,yaml}\" \".github/workflows/*.{yml,yaml}\" \".changeset/*.md\"",
     "check": "npm run lint && npm run typecheck && npm test && npm run format:check",
@@ -72,6 +72,6 @@
     "vitest": "^4.1.5"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

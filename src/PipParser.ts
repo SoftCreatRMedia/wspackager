@@ -20,17 +20,18 @@ const DEFAULT_PIP_FILENAMES: Record<string, string | null> = {
 export default class PipParser {
   private readonly additionalPips: Record<string, string>
   private readonly rootDir: string
+  private readonly fileExistsCache = new Map<string, Promise<boolean>>()
 
   constructor(additionalPips: Record<string, string>, rootDir = process.cwd()) {
     this.additionalPips = additionalPips
     this.rootDir = rootDir
   }
 
-  run(instructions: ParsedInstruction[]): ParseResult {
+  async run(instructions: ParsedInstruction[]): Promise<ParseResult> {
     const pips = this.getPipList()
 
     return {
-      files: instructions.map((instruction) => this.getFileName(instruction, pips)),
+      files: await Promise.all(instructions.map((instruction) => this.getFileName(instruction, pips))),
       styles: this.getStylePaths(instructions),
     }
   }
@@ -54,7 +55,27 @@ export default class PipParser {
     }
   }
 
-  private getFileName(instruction: ParsedInstruction, pips: Record<string, string | null>): string {
+  private pathExists(filePath: string): Promise<boolean> {
+    const resolved = path.resolve(this.rootDir, filePath)
+    const cached = this.fileExistsCache.get(resolved)
+
+    if (cached) {
+      return cached
+    }
+
+    const pending = fs.promises
+      .access(resolved, fs.constants.R_OK)
+      .then(() => true)
+      .catch(() => false)
+
+    this.fileExistsCache.set(resolved, pending)
+    return pending
+  }
+
+  private async getFileName(
+    instruction: ParsedInstruction,
+    pips: Record<string, string | null>
+  ): Promise<string> {
     if (instruction.path) {
       return instruction.path
     }
@@ -65,7 +86,7 @@ export default class PipParser {
     }
 
     // default value for all xml based pips
-    if (fs.existsSync(path.join(this.rootDir, `${instruction.type}.xml`))) {
+    if (await this.pathExists(`${instruction.type}.xml`)) {
       return `${instruction.type}.xml`
     }
 

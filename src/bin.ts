@@ -20,6 +20,38 @@ interface CliOptions {
   source?: string | boolean
   destination?: string | boolean
   quiet?: boolean
+  json?: boolean
+}
+
+interface CliJsonSuccess {
+  ok: true
+  tool: {
+    name: string
+    version: string
+  }
+  source: string
+  destination: string
+  result: {
+    filename: string | undefined
+    path: string
+    filesize: string
+  }
+}
+
+interface CliJsonError {
+  ok: false
+  tool: {
+    name: string
+    version: string
+  }
+  source: string
+  destination: string
+  error: {
+    name: string
+    message: string
+    code?: string
+    meta?: Record<string, unknown>
+  }
 }
 
 const collectPips = (value: string, list: Record<string, string>): Record<string, string> => {
@@ -123,6 +155,20 @@ const normalizeCliPath = (value: string | boolean | undefined): string => {
   return '.'
 }
 
+const createJsonContext = (options: { source: string; destination: string }) => ({
+  tool: {
+    name: pkg.name,
+    version: pkg.version,
+  },
+  source: path.resolve(process.cwd(), options.source),
+  destination: path.resolve(process.cwd(), options.destination),
+})
+
+const writeJson = (value: CliJsonSuccess | CliJsonError, isError = false): void => {
+  const stream = isError ? process.stderr : process.stdout
+  stream.write(`${JSON.stringify(value, null, 2)}\n`)
+}
+
 program
   .name('wspackager')
   .description(pkg.description)
@@ -143,6 +189,7 @@ program
     'The path the resulting archive will be saved to (defaults to cwd)',
     '.'
   )
+  .option('--json', 'output machine-readable JSON instead of human-readable logs')
   .option('-q, --quiet', 'omit any output')
   .parse(process.argv)
 
@@ -152,7 +199,8 @@ const normalizedOptions = {
   pip: options.pip ?? {},
   source: normalizeCliPath(options.source),
   destination: normalizeCliPath(options.destination),
-  quiet: Boolean(options.quiet),
+  quiet: Boolean(options.quiet || options.json),
+  json: Boolean(options.json),
 }
 
 if (!normalizedOptions.quiet) {
@@ -166,7 +214,41 @@ new TaskRunner({
   quiet: normalizedOptions.quiet,
 })
   .run()
+  .then((result) => {
+    if (!normalizedOptions.json) {
+      return
+    }
+
+    writeJson({
+      ok: true,
+      ...createJsonContext(normalizedOptions),
+      result,
+    })
+  })
   .catch((err: unknown) => {
-    console.error(err instanceof Error ? err.message : err)
+    if (normalizedOptions.json) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      const jsonError: CliJsonError = {
+        ok: false,
+        ...createJsonContext(normalizedOptions),
+        error: {
+          name: error.name,
+          message: error.message,
+        },
+      }
+
+      if ('code' in error && typeof error.code === 'string') {
+        jsonError.error.code = error.code
+      }
+
+      if ('meta' in error && typeof error.meta === 'object' && error.meta !== null) {
+        jsonError.error.meta = error.meta as Record<string, unknown>
+      }
+
+      writeJson(jsonError, true)
+    } else {
+      console.error(err instanceof Error ? err.message : err)
+    }
+
     process.exitCode = 1
   })

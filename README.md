@@ -8,7 +8,7 @@ Run `npm install -g @softcreatr/wspackager` to install the package globally and 
 
 Once installed, simply run `wspackager` in the same folder that your `package.xml` is at.
 
-`wspackager@2.x` requires Node.js `>=18`.
+`wspackager@2.x` requires Node.js `>=20`.
 `wspackager@2.x` is published as native ESM and includes TypeScript type declarations.
 `wspackager@2.x` validates direct file paths strictly (including exact casing).
 
@@ -151,6 +151,35 @@ In case you use multiple 3rd party PIPs, you can also use this parameter multipl
 #### `--quiet` (`-q`)
 
 wspackager normally outputs the resulting package structure so you can verify your package has the content it should have without unpacking it. If you don't want the program to output anything, use the quiet option.
+
+#### `--json`
+
+Outputs machine-readable JSON instead of the styled header, package tree, and success/error text. This is intended for CI pipelines and wrapper tooling.
+
+Success example:
+
+```bash
+wspackager --json
+```
+
+```json
+{
+  "ok": true,
+  "tool": {
+    "name": "@softcreatr/wspackager",
+    "version": "2.0.0"
+  },
+  "source": "/path/to/package",
+  "destination": "/path/to/package",
+  "result": {
+    "filename": "com.example.test_v1.0.0.tar.gz",
+    "path": "/path/to/package/com.example.test_v1.0.0.tar.gz",
+    "filesize": "1 MB"
+  }
+}
+```
+
+On failure, a JSON error object is written to `stderr` and the process exits with code `1`.
 
 #### `--destination [path]` (`-d`)
 

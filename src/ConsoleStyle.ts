@@ -7,6 +7,7 @@ const wrap = (open: number, close: number): WrapFn => {
     if (!supportsColor) {
       return value
     }
+
     return `\u001b[${open}m${value}\u001b[${close}m`
   }
 }

@@ -64,6 +64,49 @@ export default class TestRunner {
     return outputFilename
   }
 
+  async runCliJson(useDestination = true, outputFilename = false, extraArgs = '') {
+    if (!outputFilename) {
+      outputFilename = EXPECTED_FILE.replace('{test_name}', 'cli-json')
+    }
+
+    await this.deletePreviousTestBuild(outputFilename)
+
+    let command = `cd "${this.getTestPackagePath()}" && node ../../lib/bin.js --json`
+    if (useDestination) {
+      command += ` -d "${outputFilename}"`
+    }
+    if (extraArgs) {
+      command += ` ${extraArgs}`
+    }
+
+    const result = await exec(command)
+    if (result.stderr) {
+      throw new Error(result.stderr)
+    }
+
+    const payload = JSON.parse(result.stdout)
+    await this.expectPackageBuild(outputFilename)
+    return payload
+  }
+
+  async runCliJsonError(extraArgs = '') {
+    let command = `cd "${this.getTestPackagePath()}" && node ../../lib/bin.js --json`
+    if (extraArgs) {
+      command += ` ${extraArgs}`
+    }
+
+    try {
+      await exec(command)
+      throw new Error('Expected CLI command to fail')
+    } catch (error) {
+      if (!error.stderr) {
+        throw error
+      }
+
+      return JSON.parse(error.stderr)
+    }
+  }
+
   getTestPackagePath(absolutePath = true) {
     const dir = this.testCasePath
     if (absolutePath) {

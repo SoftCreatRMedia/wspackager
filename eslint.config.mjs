@@ -10,6 +10,14 @@ export default [
   },
   js.configs.recommended,
   {
+    files: ['test/**/*.js'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
     files: ['src/**/*.ts'],
     languageOptions: {
       parser: tsEslintParser,

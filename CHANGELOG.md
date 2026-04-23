@@ -1,3 +1,16 @@
+## **v2.1.0** (2026-04-23)
+
+- **Breaking:** Require Node.js `>=20`
+- Improve packaging performance by caching filesystem state and directory reads
+- Reduce archive filtering overhead for intermediate files through set-based lookups
+- Make default PIP file resolution async and cached
+- Normalize `package.xml` and `style.xml` into stricter internal models before processing
+- Improve XML structure validation with clearer semantic error messages
+- Add `--json` CLI output mode for CI and wrapper tooling
+- Add CLI JSON success and error coverage in tests
+- Extend ESLint coverage to test files and configure Node globals for the test suite
+- Clean up internal control flow in the packager to avoid local throw/catch warning patterns
+
 ## **v2.0.0** (2026-02-24)
 
 - **Breaking:** Require Node.js `>=18`

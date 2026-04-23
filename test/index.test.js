@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, test } from 'vitest'
@@ -8,6 +9,8 @@ import TestRunner from './TestRunner.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+const require = createRequire(import.meta.url)
+const pkg = require('../package.json')
 
 describe('usage tests', () => {
   const EXPECTED_CONTENT = ['files.tar', 'templates.tar', 'package.xml', 'page.xml']
@@ -37,6 +40,27 @@ describe('usage tests', () => {
       'com.example.test_v1.0.0-cli-source.tar',
       '-s'
     )
+  })
+
+  test('it should emit machine-readable json on successful cli builds', async () => {
+    const payload = await new TestRunner('simple-package', EXPECTED_CONTENT).runCliJson(
+      true,
+      'com.example.test_v1.0.0-cli-json.tar'
+    )
+
+    expect(payload).toMatchObject({
+      ok: true,
+      tool: {
+        name: '@softcreatr/wspackager',
+        version: pkg.version,
+      },
+      result: {
+        filename: 'com.example.test_v1.0.0-cli-json.tar',
+        filesize: expect.any(String),
+      },
+    })
+    expect(payload.result.path.endsWith('/com.example.test_v1.0.0-cli-json.tar')).toBe(true)
+    expect(payload.source.endsWith('/test/simple-package')).toBe(true)
   })
 })
 
@@ -173,6 +197,59 @@ describe('modernization tests', () => {
     await fs.promises.rm(fixtureDir, { recursive: true, force: true })
   })
 
+  test('it should emit machine-readable json on cli errors', async () => {
+    const fixtureDir = path.join(__dirname, 'missing-prepack-directory-json')
+
+    await fs.promises.rm(fixtureDir, { recursive: true, force: true })
+    await fs.promises.mkdir(fixtureDir, { recursive: true })
+    await fs.promises.writeFile(
+      path.join(fixtureDir, 'package.xml'),
+      `<?xml version="1.0" encoding="UTF-8"?>\n<package name="com.example.prepack.json" xmlns="http://www.woltlab.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.woltlab.com http://www.woltlab.com/XSD/package.xsd">\n    <packageinformation>\n        <packagename>Prepack JSON Test</packagename>\n        <packagedescription>Prepack JSON Test</packagedescription>\n        <isapplication>0</isapplication>\n        <version>1.0.0</version>\n        <date>2026-01-01</date>\n    </packageinformation>\n    <authorinformation>\n        <author>softcreatr</author>\n        <authorurl>https://softcreatr.dev</authorurl>\n    </authorinformation>\n    <instructions type="install">\n        <instruction type="template">templates.tar</instruction>\n    </instructions>\n</package>`
+    )
+
+    const payload = await new TestRunner('missing-prepack-directory-json', []).runCliJsonError()
+
+    expect(payload).toMatchObject({
+      ok: false,
+      tool: {
+        name: '@softcreatr/wspackager',
+        version: pkg.version,
+      },
+      error: {
+        name: 'FileAccessError',
+        code: 'PREPACK_SOURCE_MISSING',
+        message: "Unable to prepack 'templates.tar': source directory 'templates' could not be found",
+      },
+    })
+    expect(payload.source.endsWith('/test/missing-prepack-directory-json')).toBe(true)
+
+    await fs.promises.rm(fixtureDir, { recursive: true, force: true })
+  })
+
+  test('it should fail with a clear error when package.xml is structurally invalid', async () => {
+    const fixtureDir = path.join(__dirname, 'invalid-package-structure')
+
+    await fs.promises.rm(fixtureDir, { recursive: true, force: true })
+    await fs.promises.mkdir(fixtureDir, { recursive: true })
+    await fs.promises.writeFile(
+      path.join(fixtureDir, 'package.xml'),
+      `<?xml version="1.0" encoding="UTF-8"?>\n<package name="com.example.invalid" xmlns="http://www.woltlab.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.woltlab.com http://www.woltlab.com/XSD/package.xsd">\n    <packageinformation>\n        <packagename>Invalid Test</packagename>\n        <packagedescription>Invalid Test</packagedescription>\n        <isapplication>0</isapplication>\n        <date>2026-01-01</date>\n    </packageinformation>\n    <authorinformation>\n        <author>softcreatr</author>\n        <authorurl>https://softcreatr.dev</authorurl>\n    </authorinformation>\n</package>`
+    )
+
+    await expect(
+      wspackager.run({
+        cwd: __dirname,
+        source: 'invalid-package-structure',
+        destination: path.join('invalid-package-structure', 'com.example.invalid_v1.0.0.tar.gz'),
+        quiet: true,
+      })
+    ).rejects.toThrow(
+      "The package.xml is missing or has an invalid 'package/packageinformation[0]/version' value."
+    )
+
+    await fs.promises.rm(fixtureDir, { recursive: true, force: true })
+  })
+
   test('it should include prebuilt style archives without parsing style.xml', async () => {
     const fixtureDir = path.join(__dirname, 'style-archive-direct')
     const styleArchive = 'style_6af19c433bc0f898827a26876995b31296091878.tgz'
@@ -276,6 +353,38 @@ describe('modernization tests', () => {
         quiet: true,
       })
     ).rejects.toThrow('The style.xml does not appear to be a valid XML document.')
+
+    await fs.promises.rm(fixtureDir, { recursive: true, force: true })
+  })
+
+  test('it should fail with a clear error when style.xml is structurally invalid', async () => {
+    const fixtureDir = path.join(__dirname, 'style-rebuild-invalid-structure')
+    const styleArchive = 'style_6af19c433bc0f898827a26876995b31296091878.tgz'
+    const styleDir = path.join(fixtureDir, 'style_6af19c433bc0f898827a26876995b31296091878')
+
+    await fs.promises.rm(fixtureDir, { recursive: true, force: true })
+    await fs.promises.mkdir(styleDir, { recursive: true })
+    await fs.promises.writeFile(
+      path.join(fixtureDir, 'package.xml'),
+      `<?xml version="1.0" encoding="UTF-8"?>\n<package name="com.example.style.invalid-structure" xmlns="http://www.woltlab.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.woltlab.com http://www.woltlab.com/XSD/package.xsd">\n    <packageinformation>\n        <packagename>Style Invalid Structure Test</packagename>\n        <packagedescription>Style Invalid Structure Test</packagedescription>\n        <isapplication>0</isapplication>\n        <version>1.0.0</version>\n        <date>2026-01-01</date>\n    </packageinformation>\n    <authorinformation>\n        <author>softcreatr</author>\n        <authorurl>https://softcreatr.dev</authorurl>\n    </authorinformation>\n    <instructions type="install">\n        <instruction type="style"><![CDATA[${styleArchive}]]></instruction>\n    </instructions>\n</package>`
+    )
+
+    await fs.promises.writeFile(
+      path.join(styleDir, 'style.xml'),
+      '<style><files><templates /></files></style>'
+    )
+
+    await expect(
+      wspackager.run({
+        cwd: __dirname,
+        source: 'style-rebuild-invalid-structure',
+        destination: path.join(
+          'style-rebuild-invalid-structure',
+          'com.example.style.invalid-structure_v1.0.0.tar.gz'
+        ),
+        quiet: true,
+      })
+    ).rejects.toThrow("The style.xml is missing or has an invalid 'style/files[0]/templates' value.")
 
     await fs.promises.rm(fixtureDir, { recursive: true, force: true })
   })
